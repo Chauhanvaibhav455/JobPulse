@@ -38,6 +38,7 @@ export default function AdminPage() {
 
   const [jobs, setJobs] = useState([]);
   const [reports, setReports] = useState([]);
+  const [submissions, setSubmissions] = useState([]);
 
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
@@ -91,12 +92,13 @@ export default function AdminPage() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event, session) => {
+    } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT" && active) {
         setUser(null);
         setAuthorized(false);
         setJobs([]);
         setReports([]);
+        setSubmissions([]);
       }
     });
 
@@ -111,17 +113,23 @@ export default function AdminPage() {
   async function loadDashboard() {
     setError("");
 
-    const [jobsResult, reportsResult] = await Promise.all([
-      supabase
-        .from("jobs")
-        .select("*")
-        .order("created_at", { ascending: false }),
+    const [jobsResult, reportsResult, submissionsResult] =
+      await Promise.all([
+        supabase
+          .from("jobs")
+          .select("*")
+          .order("created_at", { ascending: false }),
 
-      supabase
-        .from("job_reports")
-        .select("id, job_id, reason, created_at")
-        .order("created_at", { ascending: false }),
-    ]);
+        supabase
+          .from("job_reports")
+          .select("id, job_id, reason, created_at")
+          .order("created_at", { ascending: false }),
+
+        supabase
+          .from("job_submissions")
+          .select("*")
+          .order("submitted_at", { ascending: false }),
+      ]);
 
     if (jobsResult.error) {
       setError(jobsResult.error.message);
@@ -133,8 +141,14 @@ export default function AdminPage() {
       return;
     }
 
+    if (submissionsResult.error) {
+      setError(submissionsResult.error.message);
+      return;
+    }
+
     setJobs(jobsResult.data || []);
     setReports(reportsResult.data || []);
+    setSubmissions(submissionsResult.data || []);
   }
 
   async function handleLogin(e) {
@@ -186,6 +200,7 @@ export default function AdminPage() {
     setAuthorized(false);
     setJobs([]);
     setReports([]);
+    setSubmissions([]);
   }
 
   function updateField(e) {
@@ -203,9 +218,10 @@ export default function AdminPage() {
 
     const payload = {
       ...form,
-      last_checked_at: form.verification_status === "recently_checked"
-        ? new Date().toISOString()
-        : null,
+      last_checked_at:
+        form.verification_status === "recently_checked"
+          ? new Date().toISOString()
+          : null,
     };
 
     const result = editingId
@@ -221,7 +237,10 @@ export default function AdminPage() {
       return;
     }
 
-    setMessage(editingId ? "Job updated successfully." : "Job added successfully.");
+    setMessage(
+      editingId ? "Job updated successfully." : "Job added successfully."
+    );
+
     setForm(emptyForm);
     setEditingId(null);
     await loadDashboard();
@@ -230,6 +249,7 @@ export default function AdminPage() {
 
   function startEdit(job) {
     setEditingId(job.id);
+
     setForm({
       title: job.title || "",
       company: job.company || "",
@@ -288,13 +308,96 @@ export default function AdminPage() {
     await loadDashboard();
   }
 
-  if (checking) {
-    return (
-      <main className="min-h-screen bg-[#090b10] p-10 text-center text-white">
-        Checking admin access...
-      </main>
+
+async function updateSubmissionStatus(submission, status) {
+  setError("");
+  setMessage("");
+
+  try {
+    let publishedJobId = submission.published_job_id || null;
+
+    if (status === "active") {
+      if (!submission.job_title?.trim() || !submission.company_name?.trim()) {
+        throw new Error("Job title and company name are required.");
+      }
+
+      if (publishedJobId) {
+        const { error: jobError } = await supabase
+          .from("jobs")
+          .update({
+            verification_status: "recently_checked",
+            last_checked_at: new Date().toISOString(),
+          })
+          .eq("id", publishedJobId);
+
+        if (jobError) throw jobError;
+      } else {
+        const { data: existingJob, error: searchError } = await supabase
+          .from("jobs")
+          .select("id")
+          .eq("source_url", submission.job_url)
+          .limit(1)
+          .maybeSingle();
+
+        if (searchError) throw searchError;
+
+        if (existingJob) {
+          publishedJobId = existingJob.id;
+        } else {
+          const { data: newJob, error: insertError } = await supabase
+            .from("jobs")
+            .insert({
+              title: submission.job_title.trim(),
+              company: submission.company_name.trim(),
+              source_url: submission.job_url,
+              source_name: new URL(submission.job_url).hostname,
+              category: "Other",
+              experience: "Fresher",
+              verification_status: "recently_checked",
+              last_checked_at: new Date().toISOString(),
+              description:
+                "Visit the official source link for complete job details.",
+            })
+            .select("id")
+            .single();
+
+          if (insertError) throw insertError;
+
+          publishedJobId = newJob.id;
+        }
+      }
+    }
+
+    const { error: updateError } = await supabase
+      .from("job_submissions")
+      .update({
+        status,
+        checked_at: new Date().toISOString(),
+        published_job_id: publishedJobId,
+      })
+      .eq("id", submission.id);
+
+    if (updateError) throw updateError;
+
+    setMessage(
+      status === "active"
+        ? "Job successfully approved and published!"
+        : "Submission status updated successfully."
     );
+
+    await loadDashboard();
+  } catch (error) {
+    setError(error.message || "Unable to update submission.");
   }
+}
+
+if (checking) {
+  return (
+    <main className="min-h-screen bg-[#090b10] p-10 text-center text-white">
+      Checking admin access...
+    </main>
+  );
+}
 
   if (!authorized) {
     return (
@@ -307,13 +410,17 @@ export default function AdminPage() {
             <div className="rounded-xl bg-blue-600 p-3">
               <ShieldCheck size={25} />
             </div>
+
             <div>
               <h1 className="text-2xl font-bold">JobPulse Admin</h1>
-              <p className="text-sm text-gray-400">Sign in to manage jobs</p>
+              <p className="text-sm text-gray-400">
+                Sign in to manage jobs
+              </p>
             </div>
           </div>
 
           <label className="mb-2 block text-sm">Email</label>
+
           <input
             type="email"
             required
@@ -324,6 +431,7 @@ export default function AdminPage() {
           />
 
           <label className="mb-2 block text-sm">Password</label>
+
           <input
             type="password"
             required
@@ -351,13 +459,18 @@ export default function AdminPage() {
   return (
     <main className="min-h-screen bg-[#090b10] px-5 py-8 text-white">
       <div className="mx-auto max-w-6xl">
+
         <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold">JobPulse Admin</h1>
+
             <p className="mt-2 text-sm text-gray-400">
               Manage opportunities and user reports.
             </p>
-            <p className="mt-1 text-xs text-gray-500">{user?.email}</p>
+
+            <p className="mt-1 text-xs text-gray-500">
+              {user?.email}
+            </p>
           </div>
 
           <div className="flex gap-2">
@@ -368,6 +481,7 @@ export default function AdminPage() {
             >
               <RefreshCw size={18} />
             </button>
+
             <button
               onClick={handleLogout}
               className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-3 text-sm hover:bg-white/5"
@@ -403,13 +517,18 @@ export default function AdminPage() {
           </div>
         </div>
 
+        {/* ADD OR EDIT JOB */}
+
         <section className="mb-10 rounded-2xl border border-white/10 bg-[#121620] p-6">
           <h2 className="mb-6 flex items-center gap-2 text-xl font-semibold">
             <Plus size={21} />
             {editingId ? "Edit job listing" : "Add a new job"}
           </h2>
 
-          <form onSubmit={handleSaveJob} className="grid gap-4 sm:grid-cols-2">
+          <form
+            onSubmit={handleSaveJob}
+            className="grid gap-4 sm:grid-cols-2"
+          >
             <input
               name="title"
               value={form.title}
@@ -516,7 +635,11 @@ export default function AdminPage() {
                 className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 py-3 font-medium hover:bg-blue-500 disabled:opacity-50"
               >
                 <Plus size={18} />
-                {saving ? "Saving..." : editingId ? "Update job" : "Add job"}
+                {saving
+                  ? "Saving..."
+                  : editingId
+                    ? "Update job"
+                    : "Add job"}
               </button>
 
               {editingId && (
@@ -535,6 +658,8 @@ export default function AdminPage() {
           </form>
         </section>
 
+        {/* MANAGE EXISTING JOBS */}
+
         <section className="mb-10">
           <h2 className="mb-5 text-xl font-semibold">
             Manage job listings
@@ -549,9 +674,11 @@ export default function AdminPage() {
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <h3 className="font-semibold">{job.title}</h3>
+
                     <p className="mt-1 text-sm text-gray-400">
                       {job.company} · {job.location}
                     </p>
+
                     <p className="mt-2 text-xs text-gray-500">
                       Status: {job.verification_status}
                     </p>
@@ -560,11 +687,15 @@ export default function AdminPage() {
                   <div className="flex flex-wrap gap-2">
                     <select
                       value={job.verification_status || "unconfirmed"}
-                      onChange={(e) => updateStatus(job, e.target.value)}
+                      onChange={(e) =>
+                        updateStatus(job, e.target.value)
+                      }
                       className="rounded-lg border border-white/10 bg-[#202634] p-2 text-xs"
                     >
                       <option value="unconfirmed">Unconfirmed</option>
-                      <option value="recently_checked">Recently checked</option>
+                      <option value="recently_checked">
+                        Recently checked
+                      </option>
                       <option value="needs_recheck">Needs recheck</option>
                       <option value="expired">Expired</option>
                     </select>
@@ -597,12 +728,129 @@ export default function AdminPage() {
           </div>
         </section>
 
+        {/* NEW: JOB LINK SUBMISSIONS */}
+
+        <section className="mb-10">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold">
+                Job Link Submissions
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-400">
+                Review opportunities submitted by students.
+              </p>
+            </div>
+
+            <span className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-400">
+              {submissions.filter(
+                (item) => item.status === "pending"
+              ).length}{" "}
+              Pending
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {submissions.map((submission) => (
+              <article
+                key={submission.id}
+                className="rounded-xl border border-white/10 bg-[#121620] p-5"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold">
+                      {submission.job_title || "Untitled opportunity"}
+                    </h3>
+
+                    <p className="mt-1 text-sm text-gray-400">
+                      {submission.company_name || "Company not provided"}
+                    </p>
+
+                    <a
+                      href={submission.job_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-3 inline-block break-all text-sm text-blue-400 hover:underline"
+                    >
+                      Open submitted job link ↗
+                    </a>
+
+                    <p className="mt-3 text-xs text-gray-500">
+                      Submitted:{" "}
+                      {submission.submitted_at
+                        ? new Date(
+                            submission.submitted_at
+                          ).toLocaleString("en-IN")
+                        : "Date unavailable"}
+                    </p>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      Last checked:{" "}
+                      {submission.checked_at
+                        ? new Date(
+                            submission.checked_at
+                          ).toLocaleString("en-IN")
+                        : "Not checked yet"}
+                    </p>
+
+                    {submission.admin_note && (
+                      <p className="mt-2 text-sm text-gray-400">
+                        Review note: {submission.admin_note}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex min-w-40 flex-col gap-2">
+                    <label
+                      className="text-xs text-gray-400"
+                      htmlFor={`submission-status-${submission.id}`}
+                    >
+                      Review status
+                    </label>
+
+                    <select
+                      id={`submission-status-${submission.id}`}
+                      value={submission.status || "pending"}
+                      onChange={(e) =>
+                        updateSubmissionStatus(
+                          submission,
+                          e.target.value
+                        )
+                      }
+                      className="rounded-lg border border-white/10 bg-[#202634] p-2 text-sm"
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="active">Active</option>
+                      <option value="closed">Closed</option>
+                      <option value="unable_to_verify">
+                        Unable to verify
+                      </option>
+                    </select>
+                  </div>
+                </div>
+              </article>
+            ))}
+
+            {submissions.length === 0 && (
+              <p className="rounded-xl border border-white/10 bg-[#121620] py-8 text-center text-gray-500">
+                No job link submissions yet.
+              </p>
+            )}
+          </div>
+        </section>
+
+        {/* EXISTING USER REPORTS */}
+
         <section>
-          <h2 className="mb-5 text-xl font-semibold">User reports</h2>
+          <h2 className="mb-5 text-xl font-semibold">
+            User reports
+          </h2>
 
           <div className="space-y-3">
             {reports.map((report) => {
-              const job = jobs.find((item) => item.id === report.job_id);
+              const job = jobs.find(
+                (item) => item.id === report.job_id
+              );
 
               return (
                 <div
@@ -612,9 +860,11 @@ export default function AdminPage() {
                   <p className="font-medium">
                     {job?.title || `Job ID: ${report.job_id}`}
                   </p>
+
                   <p className="mt-1 text-sm text-amber-400">
                     {report.reason}
                   </p>
+
                   <p className="mt-2 text-xs text-gray-500">
                     {new Date(report.created_at).toLocaleString("en-IN")}
                   </p>
@@ -629,7 +879,9 @@ export default function AdminPage() {
             )}
           </div>
         </section>
+
       </div>
     </main>
   );
 }
+

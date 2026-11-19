@@ -88,6 +88,7 @@ const [loadError, setLoadError] = useState("");
   const [category, setCategory] = useState("All");
   const [saved, setSaved] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedJob, setSelectedJob] = useState(null);
   const [reportJob, setReportJob] = useState(null);
   const [reportReason, setReportReason] = useState("Expired listing");
@@ -192,45 +193,104 @@ async function submitReport() {
 
   return (
     <main className="min-h-screen bg-[#090b10] text-white">
-      {/* Navigation */}
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#090b10]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
-          <a href="#" className="flex items-center gap-3">
-            <div className="rounded-xl bg-blue-600 p-2">
-              <Activity size={23} />
-            </div>
-            <span className="text-xl font-bold tracking-tight">
-              JobPulse
-            </span>
-          </a>
+    
+{/* Navigation */}
+<header className="sticky top-0 z-30 border-b border-white/10 bg-[#090b10]/95 backdrop-blur">
+  <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
 
-          <nav className="hidden items-center gap-8 text-sm text-gray-400 md:flex">
-            <button
-              onClick={() => {
-                setShowSaved(false);
-                setCategory("All");
-              }}
-              className="hover:text-white"
-            >
-              Explore jobs
-            </button>
+    {/* Logo */}
+    <a href="/" className="flex items-center gap-3">
+      <div className="rounded-xl bg-blue-600 p-2">
+        <Activity size={23} />
+      </div>
 
-            <button
-              onClick={() => setShowSaved(true)}
-              className="hover:text-white"
-            >
-              Saved jobs ({saved.length})
-            </button>
-          </nav>
+      <span className="text-xl font-bold tracking-tight">
+        JobPulse
+      </span>
+    </a>
 
-          <button
-            onClick={() => setShowSaved(!showSaved)}
-            className="rounded-lg border border-white/10 px-4 py-2 text-sm hover:bg-white/5 md:hidden"
-          >
-            <Bookmark size={17} />
-          </button>
-        </div>
-      </header>
+    {/* Desktop Navigation */}
+    <nav className="hidden items-center gap-7 text-sm text-gray-400 md:flex">
+
+      <button
+        onClick={() => {
+          setShowSaved(false);
+          setCategory("All");
+        }}
+        className="hover:text-white"
+      >
+        Explore jobs
+      </button>
+
+      <button
+        onClick={() => setShowSaved(true)}
+        className="hover:text-white"
+      >
+        Saved jobs ({saved.length})
+      </button>
+
+      <a href="/submit-job" className="hover:text-white">
+        Submit a Job
+      </a>
+
+      <a
+        href="/track"
+        className="rounded-lg bg-blue-600 px-4 py-2.5 font-medium text-white hover:bg-blue-500"
+      >
+        Track Submission
+      </a>
+    </nav>
+
+    {/* Mobile Menu Button */}
+    <button
+      onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+      className="rounded-lg border border-white/10 p-2 hover:bg-white/5 md:hidden"
+      aria-label="Toggle navigation"
+      aria-expanded={mobileMenuOpen}
+    >
+      {mobileMenuOpen ? <X size={21} /> : <Menu size={21} />}
+    </button>
+  </div>
+
+  {/* Mobile Dropdown */}
+  {mobileMenuOpen && (
+    <nav className="border-t border-white/10 bg-[#121620] px-5 py-4 md:hidden">
+      <div className="flex flex-col gap-4 text-sm text-gray-300">
+
+        <button
+          onClick={() => {
+            setShowSaved(false);
+            setCategory("All");
+            setMobileMenuOpen(false);
+          }}
+          className="text-left hover:text-white"
+        >
+          Explore jobs
+        </button>
+
+        <button
+          onClick={() => {
+            setShowSaved(true);
+            setMobileMenuOpen(false);
+          }}
+          className="text-left hover:text-white"
+        >
+          Saved jobs ({saved.length})
+        </button>
+
+        <a href="/submit-job" className="hover:text-white">
+          Submit a Job
+        </a>
+
+        <a href="/track" className="font-medium text-blue-400">
+          Track Submission →
+        </a>
+
+      </div>
+    </nav>
+  )}
+</header>
+
 
       {/* Hero */}
       <section className="mx-auto max-w-7xl px-5 pb-12 pt-16">
